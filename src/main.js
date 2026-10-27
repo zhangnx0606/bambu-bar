@@ -625,7 +625,8 @@ function ensurePopover() {
   });
   popoverWin.on('blur', () => {
     lastPopoverBlurAt = Date.now();
-    if (!DEV && popoverWin && !popoverWin.isDestroyed() && popoverWin.isVisible()) popoverWin.hide();
+    // 与系统菜单一致：点击其他应用、桌面或任意面板外区域时自动收起。
+    if (popoverWin && !popoverWin.isDestroyed() && popoverWin.isVisible()) popoverWin.hide();
   });
   popoverWin.on('closed', () => { popoverWin = null; });
   return popoverWin;
