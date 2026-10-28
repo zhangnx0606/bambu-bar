@@ -220,6 +220,10 @@ function netGet(host, urlPath) {
 const hub = new PrinterHub({
   makeSource: makeSourceFor,
   onReport: (serial, report) => applyReport(serial, report),
+  onTransportChange: (serial, event) => {
+    console.warn(`[printer-hub] ${serial}: ${event.from} -> ${event.to} (${event.reason})`);
+    scheduleRender();
+  },
   onAuthFailure: () => {
     const now = Date.now();
     if (now - lastAuthNotifyAt < 5000) return;
@@ -354,6 +358,13 @@ function buildViewFor(serial) {
   const entry = getUnified().find((p) => p.serial === serial);
   const rt = runtimes.get(serial);
   if (!entry) return null;
+  const transport = hub.transportFor(serial) || registry.pickTransport(entry);
+  const displayEntry = {
+    ...entry,
+    name: registry.nameForTransport(entry, transport),
+    // 标签与名称都表示当前实际链路；不再固定显示合并态 both。
+    source: transport,
+  };
   const key = errorTableKeyFor(serial);
   const table = key ? errorTables.get(key) || null : null;
   const report = rt && rt.lastReport;
@@ -369,7 +380,7 @@ function buildViewFor(serial) {
   }
   const reasonText = report && table ? errorCodes.lookupFailureReason(report, table) : null;
   const view = buildPrinterView({
-    entry,
+    entry: displayEntry,
     report,
     state: rt && rt.lastState,
     now: Date.now(),

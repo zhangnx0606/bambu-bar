@@ -14,11 +14,16 @@ class PrinterHub {
    * @param {(serial: string) => void} [deps.onAuthFailure] - 某台鉴权失败（回退不可行时才冒泡）
    * @param {(entry: object) => 'lan'|'cloud'} deps.pickTransport - 按台选传输
    */
-  constructor({ makeSource, onReport, onAuthFailure, pickTransport }) {
+  constructor({
+    makeSource, onReport, onAuthFailure, pickTransport,
+    fallbackDelayMs = 8000, onTransportChange,
+  }) {
     this._makeSource = makeSource;
     this._onReport = onReport;
     this._onAuthFailure = onAuthFailure || null;
     this._pickTransport = pickTransport;
+    this._fallbackDelayMs = fallbackDelayMs;
+    this._onTransportChange = onTransportChange || null;
     this._run = new Map(); // serial → { sig, source, everConnected, triedCloudFallback }
   }
 
@@ -53,15 +58,28 @@ class PrinterHub {
   }
 
   _startRuntime(entry, transport, sig) {
-    const rt = { sig, source: null, everConnected: false, triedCloudFallback: false };
+    const rt = {
+      sig, source: null, everConnected: false, triedCloudFallback: false,
+      fallbackTimer: null, transport,
+    };
+    const clearFallbackTimer = () => {
+      if (rt.fallbackTimer) clearTimeout(rt.fallbackTimer);
+      rt.fallbackTimer = null;
+    };
     const connect = (tp) => {
+      clearFallbackTimer();
+      rt.transport = tp;
       const source = this._makeSource(entry, tp);
       rt.source = source;
       // LAN 从未连接成功且该台也在云端 → 回退云端一次（仅一次）
-      const maybeFallback = () => {
+      const maybeFallback = (reason) => {
         if (tp === 'lan' && entry.hasCloud && !rt.triedCloudFallback && !rt.everConnected) {
           rt.triedCloudFallback = true;
+          clearFallbackTimer();
           source.stop();
+          if (this._onTransportChange) {
+            this._onTransportChange(entry.serial, { from: 'lan', to: 'cloud', reason });
+          }
           connect('cloud');
           return true;
         }
@@ -69,17 +87,25 @@ class PrinterHub {
       };
       if (typeof source.onAuthFailure === 'function') {
         source.onAuthFailure(() => {
-          if (maybeFallback()) return;
+          if (maybeFallback('auth')) return;
           if (this._onAuthFailure) this._onAuthFailure(entry.serial);
         });
       }
       // 成功连接过一次后，瞬时 error/offline 只表现为离线，不再触发回退。
       source.onState((report) => {
-        if (report && report.connected) rt.everConnected = true;
-        if (!(report && report.connected) && !rt.everConnected && maybeFallback()) return;
+        if (report && report.connected) {
+          rt.everConnected = true;
+          clearFallbackTimer();
+        }
+        if (!(report && report.connected) && !rt.everConnected && maybeFallback('offline')) return;
         this._onReport(entry.serial, report);
       });
       source.start();
+      // IP 已换网段、路由器静默丢包时，mqtt.js 可能很久才发 error/offline。
+      // 不依赖底层事件：LAN 8 秒内收不到首帧，就主动切到云端。
+      if (tp === 'lan' && entry.hasCloud && !rt.everConnected && !rt.triedCloudFallback) {
+        rt.fallbackTimer = setTimeout(() => maybeFallback('timeout'), this._fallbackDelayMs);
+      }
     };
     connect(transport);
     return rt;
@@ -96,6 +122,7 @@ class PrinterHub {
   }
 
   _stopRuntime(rt) {
+    if (rt.fallbackTimer) { clearTimeout(rt.fallbackTimer); rt.fallbackTimer = null; }
     if (rt.source) rt.source.stop();
   }
 
@@ -110,6 +137,12 @@ class PrinterHub {
 
   has(serial) {
     return this._run.has(serial);
+  }
+
+  /** 当前真正承载状态流的传输；LAN 回退云端后返回 cloud。 */
+  transportFor(serial) {
+    const rt = this._run.get(serial);
+    return rt ? rt.transport : null;
   }
 }
 

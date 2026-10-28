@@ -5,6 +5,7 @@ function mergePrinters(cloudPrinters = [], lanPrinters = []) {
   for (const c of cloudPrinters) {
     bySerial.set(c.serial, {
       serial: c.serial, name: c.name || c.serial, model: c.model || '',
+      cloudName: c.name || c.serial, lanName: null,
       source: 'cloud', hasCloud: true, hasLan: false,
       online: c.online != null ? c.online : null,
       printStatus: c.printStatus != null ? c.printStatus : null,
@@ -15,11 +16,13 @@ function mergePrinters(cloudPrinters = [], lanPrinters = []) {
     const ex = bySerial.get(l.serial);
     if (ex) {
       ex.source = 'both'; ex.hasLan = true; ex.host = l.host;
-      if (l.name) ex.name = l.name;          // LAN 自定义名优先
+      ex.lanName = l.name || l.serial;
+      if (l.name) ex.name = l.name;          // 兼容旧调用方；面板按实际传输动态选名
       if (l.model) ex.model = l.model;
     } else {
       bySerial.set(l.serial, {
         serial: l.serial, name: l.name || l.serial, model: l.model || '',
+        cloudName: null, lanName: l.name || l.serial,
         source: 'lan', hasCloud: false, hasLan: true,
         online: null, printStatus: null, host: l.host,
       });
@@ -29,6 +32,14 @@ function mergePrinters(cloudPrinters = [], lanPrinters = []) {
   return [...bySerial.values()].sort(
     (a, b) => (rank[a.source] - rank[b.source]) || a.name.localeCompare(b.name),
   );
+}
+
+// 同一序列号可同时有云端昵称与 LAN 自定义名；面板名称跟当前实际连接走。
+function nameForTransport(entry, transport) {
+  if (!entry) return '?';
+  if (transport === 'cloud') return entry.cloudName || entry.name || entry.serial || '?';
+  if (transport === 'lan') return entry.lanName || entry.name || entry.serial || '?';
+  return entry.name || entry.serial || '?';
 }
 
 function pickTransport(entry) {
@@ -79,4 +90,7 @@ function computeMigration(s = {}) {
   return { set, del };
 }
 
-module.exports = { mergePrinters, pickTransport, onlineRoseSerials, addLan, removeLan, renameInList, computeMigration };
+module.exports = {
+  mergePrinters, pickTransport, nameForTransport, onlineRoseSerials,
+  addLan, removeLan, renameInList, computeMigration,
+};

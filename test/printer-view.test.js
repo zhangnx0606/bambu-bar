@@ -172,6 +172,8 @@ test('mergePrinters：云端与局域网同一台合并为 both，且优先走 L
   assert.equal(merged[0].source, 'both');
   assert.equal(merged[0].host, '192.168.1.9');
   assert.equal(merged[0].name, 'LAN A', '局域网自定义名优先');
+  assert.equal(registry.nameForTransport(merged[0], 'cloud'), 'Cloud A');
+  assert.equal(registry.nameForTransport(merged[0], 'lan'), 'LAN A');
   assert.equal(registry.pickTransport(merged[0]), 'lan');
 });
 
